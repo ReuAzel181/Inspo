@@ -17,3 +17,6 @@ yarn-error.log*
 .data
 public/screenshots
 public/uploads
+tsconfig.tsbuildinfo
+next.config.js
+LOCAL_SETUP.md

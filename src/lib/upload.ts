@@ -3,7 +3,11 @@ import * as path from 'path';
 
 const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
 
-export async function saveUploadedImage(dataUrl: string, referenceId: string): Promise<string> {
+export async function saveUploadedImage(
+  dataUrl: string,
+  referenceId: string,
+  suffix = 'cover'
+): Promise<string> {
   if (!dataUrl || !dataUrl.startsWith('data:image/')) {
     return '';
   }
@@ -15,7 +19,7 @@ export async function saveUploadedImage(dataUrl: string, referenceId: string): P
 
   const imageType = matches[1] || 'png';
   const base64Data = matches[2];
-  const fileName = `reference-${referenceId}.${imageType}`;
+  const fileName = `reference-${referenceId}-${suffix}.${imageType}`;
 
   await fs.mkdir(UPLOADS_DIR, { recursive: true });
   await fs.writeFile(

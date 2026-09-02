@@ -20,7 +20,14 @@ async function readReferences(): Promise<Reference[]> {
   await ensureDataDir();
   try {
     const data = await fs.readFile(REFERENCES_FILE, 'utf-8');
-    return JSON.parse(data) || [];
+    const references = JSON.parse(data) || [];
+    return references.map((reference: Partial<Reference>) => ({
+      ...reference,
+      userId: reference.userId || 'user-1',
+      additionalImageUrls: reference.additionalImageUrls || [],
+      thumbnailPosition: reference.thumbnailPosition || 'top',
+      additionalImagePositions: reference.additionalImagePositions || [],
+    })) as Reference[];
   } catch (error) {
     // File doesn't exist yet, return empty array
     return [];
@@ -45,6 +52,9 @@ export async function createReference(
     title: string;
     thumbnailUrl: string;
     screenshotUrl: string;
+    additionalImageUrls?: string[];
+    thumbnailPosition?: 'top' | 'center' | 'bottom';
+    additionalImagePositions?: ('top' | 'center' | 'bottom')[];
     description: string;
     colors: string[];
     typography: string[];
@@ -61,11 +71,15 @@ export async function createReference(
   const now = new Date();
   const reference: Reference = {
     id: generateId(),
+    userId,
     url: data.url,
     title: data.title,
     description: data.description,
     thumbnailUrl: data.thumbnailUrl,
     screenshotUrl: data.screenshotUrl,
+    additionalImageUrls: data.additionalImageUrls || [],
+    thumbnailPosition: data.thumbnailPosition || 'top',
+    additionalImagePositions: data.additionalImagePositions || [],
     tags: data.tags || [],
     colors: data.colors || [],
     typography: data.typography || [],

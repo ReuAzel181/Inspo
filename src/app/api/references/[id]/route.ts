@@ -42,12 +42,29 @@ export async function PATCH(
     const updates = { ...body };
 
     if (body.thumbnailDataUrl) {
-      const thumbnailUrl = await saveUploadedImage(body.thumbnailDataUrl, id);
+      const thumbnailUrl = await saveUploadedImage(body.thumbnailDataUrl, id, 'cover');
       if (thumbnailUrl) {
         updates.thumbnailUrl = thumbnailUrl;
         updates.screenshotUrl = thumbnailUrl;
       }
       delete updates.thumbnailDataUrl;
+    }
+
+    if (Array.isArray(body.additionalImageDataUrls)) {
+      const additionalImageUrls = await Promise.all(
+        body.additionalImageDataUrls.map(async (image: unknown, index: number) => {
+          if (typeof image !== 'string') return '';
+          if (!image.startsWith('data:image/')) return image;
+          return saveUploadedImage(image, id, `additional-${index}`);
+        })
+      );
+
+      updates.additionalImageUrls = additionalImageUrls.filter(Boolean);
+      delete updates.additionalImageDataUrls;
+    }
+
+    if (Array.isArray(body.additionalImagePositions)) {
+      updates.additionalImagePositions = body.additionalImagePositions;
     }
 
     const reference = await updateReference(id, 'user-1', updates);

@@ -7,6 +7,9 @@ export interface Reference {
   description: string;
   thumbnailUrl: string;
   screenshotUrl: string;
+  additionalImageUrls: string[];
+  thumbnailPosition: 'top' | 'center' | 'bottom';
+  additionalImagePositions: ('top' | 'center' | 'bottom')[];
   tags: string[];
   colors: string[];
   typography: string[];
@@ -27,6 +30,11 @@ export interface ReferenceCreateInput {
 
 export interface ReferenceUpdateInput {
   title?: string;
+  description?: string;
+  screenshotUrl?: string;
+  additionalImageUrls?: string[];
+  thumbnailPosition?: 'top' | 'center' | 'bottom';
+  additionalImagePositions?: ('top' | 'center' | 'bottom')[];
   tags?: string[];
   notes?: string;
   industry?: string;
