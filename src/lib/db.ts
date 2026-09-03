@@ -18,6 +18,7 @@ export async function initializeDatabase() {
         typography TEXT[] DEFAULT ARRAY[]::TEXT[],
         notes TEXT,
         is_favorite BOOLEAN DEFAULT FALSE,
+        is_archived BOOLEAN DEFAULT FALSE,
         industry TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -99,6 +100,7 @@ export async function createReference(
           typography: data.typography || [],
           notes: data.notes || '',
           isFavorite: false,
+          isArchived: false,
           industry: data.industry || 'Other',
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -180,6 +182,8 @@ export async function getReferences(
       references = references.filter((r) => r.isFavorite === params.isFavorite);
     }
 
+    references = references.filter((r) => r.isArchived === Boolean(params.isArchived));
+
     // Sorting
     if (params.sortBy === 'oldest') {
       references.reverse();
@@ -222,6 +226,7 @@ export async function updateReference(
     const notes = data.notes !== undefined ? data.notes : current.notes;
     const industry = data.industry !== undefined ? data.industry : current.industry;
     const isFavorite = data.isFavorite !== undefined ? data.isFavorite : current.isFavorite;
+    const isArchived = data.isArchived !== undefined ? data.isArchived : current.isArchived;
 
     const result = await sql`
       UPDATE references 
@@ -231,6 +236,7 @@ export async function updateReference(
         notes = ${notes},
         industry = ${industry},
         is_favorite = ${isFavorite},
+        is_archived = ${isArchived},
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ${id} AND user_id = ${userId}
       RETURNING *;
@@ -247,11 +253,12 @@ export async function updateReference(
   }
 }
 
-// Delete reference
+// Archive reference
 export async function deleteReference(id: string, userId: string): Promise<boolean> {
   try {
     const result = await sql`
-      DELETE FROM references WHERE id = ${id} AND user_id = ${userId};
+      UPDATE references SET is_archived = TRUE, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ${id} AND user_id = ${userId};
     `;
 
     return result.rowCount > 0;
@@ -293,6 +300,7 @@ function mapDatabaseToReference(row: any): Reference {
     typography: row.typography || [],
     notes: row.notes || '',
     isFavorite: row.is_favorite,
+    isArchived: row.is_archived || false,
     industry: row.industry,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),

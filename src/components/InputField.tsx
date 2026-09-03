@@ -58,7 +58,7 @@ export function InputField({
             // DEFAULT
             'border-[#dfe3e8]',
             'bg-white',
-            'shadow-sm',
+            'shadow-[0_1px_2px_rgba(15,23,42,0.03)]',
 
             // HOVER ONLY WHEN NOT FOCUSED
             'group-hover:not-focus-within:border-[#c9d1da]',

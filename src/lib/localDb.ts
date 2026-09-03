@@ -24,9 +24,13 @@ async function readReferences(): Promise<Reference[]> {
     return references.map((reference: Partial<Reference>) => ({
       ...reference,
       userId: reference.userId || 'user-1',
+      additionalLinks: reference.additionalLinks || [],
+      additionalLinkNames: reference.additionalLinkNames || [],
       additionalImageUrls: reference.additionalImageUrls || [],
+      additionalImageNames: reference.additionalImageNames || [],
       thumbnailPosition: reference.thumbnailPosition || 'top',
       additionalImagePositions: reference.additionalImagePositions || [],
+      isArchived: reference.isArchived || false,
     })) as Reference[];
   } catch (error) {
     // File doesn't exist yet, return empty array
@@ -53,6 +57,7 @@ export async function createReference(
     thumbnailUrl: string;
     screenshotUrl: string;
     additionalImageUrls?: string[];
+    additionalImageNames?: string[];
     thumbnailPosition?: 'top' | 'center' | 'bottom';
     additionalImagePositions?: ('top' | 'center' | 'bottom')[];
     description: string;
@@ -78,6 +83,7 @@ export async function createReference(
     thumbnailUrl: data.thumbnailUrl,
     screenshotUrl: data.screenshotUrl,
     additionalImageUrls: data.additionalImageUrls || [],
+    additionalImageNames: data.additionalImageNames || [],
     thumbnailPosition: data.thumbnailPosition || 'top',
     additionalImagePositions: data.additionalImagePositions || [],
     tags: data.tags || [],
@@ -85,6 +91,7 @@ export async function createReference(
     typography: data.typography || [],
     notes: data.notes || '',
     isFavorite: false,
+    isArchived: false,
     industry: data.industry || 'Other',
     createdAt: now,
     updatedAt: now,
@@ -107,6 +114,8 @@ export async function getReferences(
   params: SearchParams
 ): Promise<{ references: Reference[]; total: number }> {
   let references = await readReferences();
+
+  references = references.filter((ref) => ref.isArchived === Boolean(params.isArchived));
 
   // Apply filters
   if (params.query) {
@@ -174,16 +183,20 @@ export async function updateReference(
   return updated;
 }
 
-// Delete reference
+// Archive reference
 export async function deleteReference(id: string, userId: string): Promise<boolean> {
   const references = await readReferences();
-  const index = references.findIndex((ref) => ref.id === id);
+  const index = references.findIndex((ref) => ref.id === id && ref.userId === userId);
 
   if (index === -1) {
     return false;
   }
 
-  references.splice(index, 1);
+  references[index] = {
+    ...references[index],
+    isArchived: true,
+    updatedAt: new Date(),
+  };
   await writeReferences(references);
   return true;
 }

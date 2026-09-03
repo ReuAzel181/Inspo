@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { SearchParams } from '@/types';
-import { GridIcon, ListIcon, SmallChevron } from './icons';
+import { SmallChevron } from './icons';
 
 type LibraryView = 'all' | 'favorites' | 'recent';
 
@@ -8,8 +8,6 @@ export function LibraryToolbar({
   libraryView,
   searchParams,
   hasActiveFilters,
-  viewMode,
-  setViewMode,
   setSearchParams,
   showAllReferences,
   showFavorites,
@@ -19,8 +17,6 @@ export function LibraryToolbar({
   libraryView: LibraryView;
   searchParams: SearchParams;
   hasActiveFilters: boolean;
-  viewMode: 'grid' | 'list';
-  setViewMode: Dispatch<SetStateAction<'grid' | 'list'>>;
   setSearchParams: Dispatch<SetStateAction<SearchParams>>;
   showAllReferences: () => void;
   showFavorites: () => void;
@@ -66,31 +62,6 @@ export function LibraryToolbar({
           </button>
         )}
 
-        <div className="flex h-8 rounded-md border border-[#dfe3e8] bg-white p-0.5">
-          <button
-            type="button"
-            onClick={() => setViewMode('grid')}
-            className={`flex w-8 items-center justify-center rounded-[4px] ${
-              viewMode === 'grid' ? 'bg-[#edf4fd] text-[#1769d1]' : 'text-[#969ca4]'
-            }`}
-            aria-label="Grid view"
-            aria-pressed={viewMode === 'grid'}
-          >
-            <GridIcon />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setViewMode('list')}
-            className={`flex w-8 items-center justify-center rounded-[4px] ${
-              viewMode === 'list' ? 'bg-[#edf4fd] text-[#1769d1]' : 'text-[#969ca4]'
-            }`}
-            aria-label="List view"
-            aria-pressed={viewMode === 'list'}
-          >
-            <ListIcon />
-          </button>
-        </div>
       </div>
     </section>
   );

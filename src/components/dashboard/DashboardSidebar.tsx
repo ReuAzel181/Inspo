@@ -1,8 +1,8 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { DESIGN_TAGS, INDUSTRY_CATEGORIES, type SearchParams } from '@/types';
-import { CheckIcon, ChevronIcon, ClockIcon, LibraryIcon, StarIcon } from './icons';
+import { ArchiveIcon, CheckIcon, ChevronIcon, ClockIcon, LibraryIcon, StarIcon } from './icons';
 
-type LibraryView = 'all' | 'favorites' | 'recent';
+type LibraryView = 'all' | 'favorites' | 'recent' | 'archive';
 
 export function DashboardSidebar({
   sidebarOpen,
@@ -12,6 +12,7 @@ export function DashboardSidebar({
   showAllReferences,
   showFavorites,
   showRecentlyAdded,
+  showArchive,
   handleTagChange,
   setSidebarOpen,
 }: {
@@ -22,6 +23,7 @@ export function DashboardSidebar({
   showAllReferences: () => void;
   showFavorites: () => void;
   showRecentlyAdded: () => void;
+  showArchive: () => void;
   handleTagChange: (tag: string, checked: boolean) => void;
   setSidebarOpen: Dispatch<SetStateAction<boolean>>;
 }) {
@@ -49,21 +51,11 @@ export function DashboardSidebar({
                 Collection
               </div>
 
-              <div className="space-y-1">
-                <NavItem label="All sources" icon={<LibraryIcon />} isActive={false} onClick={() => {}} />
-                <NavItem label="Pinned" icon={<StarIcon />} isActive={false} onClick={() => {}} />
-              </div>
-            </section>
-
-            <section className="mb-8">
-              <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9298a1]">
-                Library
-              </div>
-
               <nav className="space-y-0.5">
                 <NavItem label="All references" icon={<LibraryIcon />} isActive={libraryView === 'all'} onClick={showAllReferences} />
                 <NavItem label="Favorites" icon={<StarIcon />} isActive={libraryView === 'favorites'} onClick={showFavorites} />
                 <NavItem label="Recently added" icon={<ClockIcon />} isActive={libraryView === 'recent'} onClick={showRecentlyAdded} />
+                <NavItem label="Archive" icon={<ArchiveIcon />} isActive={libraryView === 'archive'} onClick={showArchive} />
               </nav>
             </section>
 
@@ -99,7 +91,7 @@ export function DashboardSidebar({
                           checked ? 'border-[#1769d1] bg-[#1769d1]' : 'border-[#cbd0d6] bg-white'
                         }`}
                       >
-                        {checked && <CheckIcon />}
+                        {checked && <span className="text-white"><CheckIcon /></span>}
                       </span>
 
                       <span>{tag}</span>

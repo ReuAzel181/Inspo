@@ -3,11 +3,14 @@ export interface Reference {
   id: string;
   userId: string;
   url: string;
+  additionalLinks?: string[];
+  additionalLinkNames?: string[];
   title: string;
   description: string;
   thumbnailUrl: string;
   screenshotUrl: string;
   additionalImageUrls: string[];
+  additionalImageNames?: string[];
   thumbnailPosition: 'top' | 'center' | 'bottom';
   additionalImagePositions: ('top' | 'center' | 'bottom')[];
   tags: string[];
@@ -15,6 +18,7 @@ export interface Reference {
   typography: string[];
   notes: string;
   isFavorite: boolean;
+  isArchived: boolean;
   industry: string;
   createdAt: Date;
   updatedAt: Date;
@@ -29,16 +33,21 @@ export interface ReferenceCreateInput {
 }
 
 export interface ReferenceUpdateInput {
+  url?: string;
+  additionalLinks?: string[];
+  additionalLinkNames?: string[];
   title?: string;
   description?: string;
   screenshotUrl?: string;
   additionalImageUrls?: string[];
+  additionalImageNames?: string[];
   thumbnailPosition?: 'top' | 'center' | 'bottom';
   additionalImagePositions?: ('top' | 'center' | 'bottom')[];
   tags?: string[];
   notes?: string;
   industry?: string;
   isFavorite?: boolean;
+  isArchived?: boolean;
 }
 
 // Extracted Data Types
@@ -63,6 +72,7 @@ export interface FilterOptions {
   tags?: string[];
   industry?: string;
   isFavorite?: boolean;
+  isArchived?: boolean;
   sortBy?: 'recent' | 'oldest' | 'title' | 'added';
 }
 
@@ -89,9 +99,47 @@ export const DESIGN_TAGS = [
   'Light',
   'Experimental',
   'Typography-focused',
+  'Round',
+  'Edge Mix',
+  'Custom',
+  'Serif',
+  'Sans',
+  'Font Mix',
+  'Theme Mix',
 ] as const;
 
 export type DesignTag = (typeof DESIGN_TAGS)[number];
+
+export const DESIGN_TAG_GROUPS = [
+  {
+    label: 'Edges',
+    tags: ['Rounded', 'Round', 'Sharp', 'Edge Mix', 'Custom'],
+  },
+  {
+    label: 'Font',
+    tags: ['Serif', 'Sans', 'Font Mix'],
+  },
+  {
+    label: 'Theme',
+    tags: ['Dark', 'Light', 'Theme Mix'],
+  },
+  {
+    label: 'Vibe',
+    tags: [
+      'Elegant',
+      'Minimal',
+      'Editorial',
+      'Luxury',
+      'Bold',
+      'Playful',
+      'Corporate',
+      'Modern',
+      'Brutalist',
+      'Experimental',
+      'Typography-focused',
+    ],
+  },
+] as const;
 
 export const INDUSTRY_CATEGORIES = [
   'Technology',

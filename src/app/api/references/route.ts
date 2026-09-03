@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
           : searchParams.get('isFavorite') === 'false'
             ? false
             : undefined,
+          isArchived: searchParams.get('isArchived') === 'true',
       sortBy: (searchParams.get('sortBy') as any) || 'recent',
       limit: parseInt(searchParams.get('limit') || '50'),
       offset: parseInt(searchParams.get('offset') || '0'),
@@ -154,6 +155,7 @@ export async function POST(request: NextRequest) {
       typography: [],
       notes: '',
       isFavorite: false,
+      isArchived: false,
       industry: 'Other',
       createdAt: new Date(),
       updatedAt: new Date(),

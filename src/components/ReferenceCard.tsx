@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, type MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Reference } from '@/types';
 import ReferenceModal from './ReferenceModal';
 
 interface ReferenceCardProps {
   reference: Reference;
   onUpdate: (reference: Reference) => void;
-  onDelete: (id: string) => void;
-  viewMode?: 'grid' | 'list';
+  onDelete: (reference: Reference) => void;
+  onRestore: (id: string) => void;
+  isArchiveView: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -74,20 +76,75 @@ function ImagePlaceholderIcon() {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Image Position                                                             */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Supports the position values used by the reference data:
+ *
+ *   "top"
+ *   "center"
+ *   "bottom"
+ *
+ * It also accepts common CSS-style values such as:
+ *
+ *   "top center"
+ *   "center center"
+ *   "bottom center"
+ *   "50%"
+ *
+ * The horizontal position is intentionally always centered because the
+ * complete left-to-right width of the image must remain visible.
+ */
+
+function getVerticalPosition(position: string): 'top' | 'center' | 'bottom' {
+  const value = position.toLowerCase().trim();
+
+  if (
+    value === 'bottom' ||
+    value.startsWith('bottom ') ||
+    value.endsWith(' bottom') ||
+    value === '100%'
+  ) {
+    return 'bottom';
+  }
+
+  if (
+    value === 'center' ||
+    value.startsWith('center ') ||
+    value.endsWith(' center') ||
+    value === '50%'
+  ) {
+    return 'center';
+  }
+
+  return 'top';
+}
+
+/* -------------------------------------------------------------------------- */
 /* Image Preview                                                              */
 /* -------------------------------------------------------------------------- */
 
 /*
- * The important difference here:
+ * Important:
  *
- * We DO NOT use object-contain.
- * We DO NOT force the entire image into the card.
+ * We do NOT use object-cover.
+ * We do NOT enlarge the image horizontally.
  *
- * Instead, the image is intentionally larger than the preview area.
- * The preview acts as a viewport/window over the image.
+ * The image is rendered at exactly 100% of the viewport width, preserving
+ * its original aspect ratio. Therefore the entire left-to-right image is
+ * visible.
  *
- * This keeps screenshots visually zoomed and prevents the entire large
- * screenshot from being aggressively reduced to the card dimensions.
+ * If the resulting image is taller than the preview area, only the vertical
+ * portion is cropped.
+ *
+ * top    -> shows the top of the screenshot
+ * center -> shows the center of the screenshot
+ * bottom -> shows the bottom of the screenshot
+ *
+ * This avoids the horizontal crop introduced by object-cover and avoids
+ * the additional resampling caused by scaling the image beyond its natural
+ * display width.
  */
 
 function ImagePreview({
@@ -101,19 +158,26 @@ function ImagePreview({
   objectPosition?: string;
   className?: string;
 }) {
+  const verticalPosition = getVerticalPosition(objectPosition);
+
+  const positionClass =
+    verticalPosition === 'top'
+      ? 'top-0'
+      : verticalPosition === 'bottom'
+        ? 'bottom-0'
+        : 'top-1/2 -translate-y-1/2';
+
   return (
     <div
-      className={`relative overflow-hidden bg-[#f1f3f5] ${className}`}
+      className={`relative h-full min-w-0 overflow-hidden bg-[#f1f3f5] ${className}`}
     >
       <img
         src={src}
         alt={alt}
-        className="absolute left-0 top-0 h-auto w-[145%] max-w-none select-none"
+        className={`absolute left-0 w-full max-w-none select-none ${positionClass}`}
         style={{
-          objectPosition,
+          height: 'auto',
           imageRendering: 'auto',
-          transform: 'translateZ(0)',
-          backfaceVisibility: 'hidden',
         }}
         loading="lazy"
         decoding="async"
@@ -131,7 +195,8 @@ export function ReferenceCard({
   reference,
   onUpdate,
   onDelete,
-  viewMode = 'grid',
+  onRestore,
+  isArchiveView,
 }: ReferenceCardProps) {
   const [showModal, setShowModal] = useState(false);
   const [isFavorite, setIsFavorite] = useState(reference.isFavorite);
@@ -161,146 +226,23 @@ export function ReferenceCard({
     }
   };
 
-  const handleDelete = async (e: MouseEvent) => {
+  const handleDelete = (e: MouseEvent) => {
     e.stopPropagation();
-
-    if (!confirm('Delete this reference?')) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/references/${reference.id}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        onDelete(reference.id);
-      }
-    } catch (error) {
-      console.error('Failed to delete reference:', error);
-    }
+    onDelete(reference);
   };
 
-  /* ------------------------------------------------------------------------ */
-  /* List View                                                                */
-  /* ------------------------------------------------------------------------ */
+  const handleRestore = async (e: MouseEvent) => {
+    e.stopPropagation();
+    const response = await fetch(`/api/references/${reference.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: false }),
+    });
 
-  if (viewMode === 'list') {
-    return (
-      <>
-        <article
-          onClick={() => setShowModal(true)}
-          className="group flex cursor-pointer items-center gap-4 rounded-xl border border-[#e5e7eb] bg-white p-4 transition-colors duration-150 hover:border-[#d5d9df] hover:bg-[#fafbfc] sm:p-5"
-        >
-          {/* Image */}
-          <div className="relative flex h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-[#f1f3f5] sm:h-24 sm:w-24">
-            {reference.thumbnailUrl ? (
-              <div className="flex h-full w-full">
-                <ImagePreview
-                  src={reference.thumbnailUrl}
-                  alt={reference.title}
-                  objectPosition={reference.thumbnailPosition || 'top'}
-                  className={
-                    reference.additionalImageUrls?.length
-                      ? 'h-full w-1/2'
-                      : 'h-full w-full'
-                  }
-                />
-
-                {reference.additionalImageUrls?.[0] && (
-                  <ImagePreview
-                    src={reference.additionalImageUrls[0]}
-                    alt={`${reference.title} secondary image`}
-                    objectPosition={
-                      reference.additionalImagePositions?.[0] || 'top'
-                    }
-                    className="h-full w-1/2"
-                  />
-                )}
-              </div>
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-[#b8bec7]">
-                <ImagePlaceholderIcon />
-              </div>
-            )}
-          </div>
-
-          {/* Content */}
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-[#17191c]">
-              {reference.title}
-            </h3>
-
-            <p className="mt-1 truncate text-xs text-[#8a919b]">
-              {reference.url}
-            </p>
-
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              {reference.industry && (
-                <span className="rounded-md bg-[#eef5ff] px-2 py-1 text-[11px] font-semibold text-[#1769d1]">
-                  {reference.industry}
-                </span>
-              )}
-
-              {reference.tags.slice(0, 3).map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-md bg-[#f5f6f8] px-2 py-1 text-[11px] font-medium text-[#646b75]"
-                >
-                  {tag}
-                </span>
-              ))}
-
-              {reference.tags.length > 3 && (
-                <span className="text-[11px] font-medium text-[#9298a1]">
-                  +{reference.tags.length - 3}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={handleToggleFavorite}
-              aria-label={isFavorite ? 'Remove favorite' : 'Add favorite'}
-              title={isFavorite ? 'Remove favorite' : 'Add favorite'}
-              className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-                isFavorite
-                  ? 'bg-[#fff1f1] text-[#d33b3b]'
-                  : 'text-[#9aa0a8] hover:bg-[#f5f6f8] hover:text-[#d33b3b]'
-              }`}
-            >
-              <HeartIcon filled={isFavorite} />
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDelete}
-              aria-label="Delete reference"
-              title="Delete reference"
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-[#9aa0a8] transition-colors hover:bg-[#fff1f1] hover:text-[#d33b3b]"
-            >
-              <TrashIcon />
-            </button>
-          </div>
-        </article>
-
-        {showModal && (
-          <ReferenceModal
-            reference={reference}
-            onClose={() => setShowModal(false)}
-            onUpdate={onUpdate}
-          />
-        )}
-      </>
-    );
-  }
-
-  /* ------------------------------------------------------------------------ */
-  /* Grid View                                                                */
-  /* ------------------------------------------------------------------------ */
+    if (response.ok) {
+      onRestore(reference.id);
+    }
+  };
 
   return (
     <>
@@ -344,8 +286,8 @@ export function ReferenceCard({
           <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-150 group-hover:bg-black/30" />
 
           {/* Actions */}
-          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between p-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-            <button
+          <div className={`absolute inset-x-0 bottom-0 flex items-center p-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100 ${isArchiveView ? 'justify-end' : 'justify-between'}`}>
+            {!isArchiveView && <button
               type="button"
               onClick={handleToggleFavorite}
               aria-label={isFavorite ? 'Remove favorite' : 'Add favorite'}
@@ -357,17 +299,29 @@ export function ReferenceCard({
               }`}
             >
               <HeartIcon filled={isFavorite} />
-            </button>
+            </button>}
 
-            <button
-              type="button"
-              onClick={handleDelete}
-              aria-label="Delete reference"
-              title="Delete reference"
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-[#30343a] transition-colors hover:bg-[#f3f4f6] hover:text-[#d33b3b]"
-            >
-              <TrashIcon />
-            </button>
+            {isArchiveView ? (
+              <button
+                type="button"
+                onClick={handleRestore}
+                aria-label="Recover reference"
+                title="Recover reference"
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-[#30343a] transition-colors hover:bg-[#f3f4f6] hover:text-[#1769d1]"
+              >
+                <TrashIcon className="rotate-180" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleDelete}
+                aria-label="Archive reference"
+                title="Archive reference"
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-[#30343a] transition-colors hover:bg-[#f3f4f6] hover:text-[#d33b3b]"
+              >
+                <TrashIcon />
+              </button>
+            )}
           </div>
         </div>
 
@@ -382,36 +336,37 @@ export function ReferenceCard({
           </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            {reference.industry && (
+            {reference.industry && reference.industry !== 'Other' && (
               <span className="rounded-md bg-[#eef5ff] px-2 py-1 text-[11px] font-semibold text-[#1769d1]">
                 {reference.industry}
               </span>
             )}
 
-            {reference.tags.slice(0, 2).map((tag) => (
-              <span
-                key={tag}
-                className="rounded-md bg-[#f5f6f8] px-2 py-1 text-[11px] font-medium text-[#646b75]"
-              >
-                {tag}
-              </span>
-            ))}
-
-            {reference.tags.length > 2 && (
-              <span className="text-[11px] font-medium text-[#9298a1]">
-                +{reference.tags.length - 2}
-              </span>
-            )}
+            {reference.tags
+              .filter((tag) => tag !== 'Other')
+              .map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-md bg-[#f5f6f8] px-2 py-1 text-[11px] font-medium text-[#646b75]"
+                >
+                  {tag}
+                </span>
+              ))}
           </div>
         </div>
       </article>
 
       {showModal && (
-        <ReferenceModal
-          reference={reference}
-          onClose={() => setShowModal(false)}
-          onUpdate={onUpdate}
-        />
+        typeof document !== 'undefined'
+          ? createPortal(
+              <ReferenceModal
+                reference={reference}
+                onClose={() => setShowModal(false)}
+                onUpdate={onUpdate}
+              />,
+              document.body
+            )
+          : null
       )}
     </>
   );

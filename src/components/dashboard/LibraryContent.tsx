@@ -5,27 +5,37 @@ import { LibraryIcon, SearchIcon } from './icons';
 export function LibraryContent({
   loading,
   references,
-  viewMode,
   hasActiveFilters,
   onUpdate,
   onDelete,
+  onRestore,
+  isArchiveView,
 }: {
   loading: boolean;
   references: Reference[];
-  viewMode: 'grid' | 'list';
   hasActiveFilters: boolean;
   onUpdate: (reference: Reference) => void;
-  onDelete: (id: string) => void;
+  onDelete: (reference: Reference) => void;
+  onRestore: (id: string) => void;
+  isArchiveView: boolean;
 }) {
+  const contentKey = loading
+    ? 'loading'
+    : references.length > 0
+      ? references.map((reference) => reference.id).join('-')
+      : 'empty';
+
   return (
     <section className="pb-12">
-      {loading ? (
-        <LoadingState />
-      ) : references.length === 0 ? (
-        <EmptyState hasActiveFilters={hasActiveFilters} />
-      ) : (
-        <ReferenceGrid references={references} viewMode={viewMode} onUpdate={onUpdate} onDelete={onDelete} />
-      )}
+      <div key={contentKey} className="library-content-transition">
+        {loading ? (
+          <LoadingState />
+        ) : references.length === 0 ? (
+          <EmptyState hasActiveFilters={hasActiveFilters} />
+        ) : (
+          <ReferenceGrid references={references} onUpdate={onUpdate} onDelete={onDelete} onRestore={onRestore} isArchiveView={isArchiveView} />
+        )}
+      </div>
     </section>
   );
 }

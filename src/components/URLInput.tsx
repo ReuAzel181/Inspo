@@ -54,11 +54,11 @@ export function URLInput({ onAdd }: URLInputProps) {
           onChange={(e) => setUrl(e.target.value)}
           disabled={loading}
           status={'default'}
-          size="md"
+          size="sm"
           placeholder="Paste a website URL... (e.g., www.example.com)"
           leadingIcon={<LinkIcon />}
           containerClassName="min-w-0 flex-1"
-          inputClassName="h-full text-[14px]"
+          inputClassName="h-full text-[12px]"
         />
 
         <button

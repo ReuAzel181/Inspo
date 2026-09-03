@@ -5,21 +5,22 @@ import { AddReferencePanel } from '@/components/dashboard/AddReferencePanel';
 import { DashboardSidebar } from '@/components/dashboard/DashboardSidebar';
 import { LibraryContent } from '@/components/dashboard/LibraryContent';
 import { LibraryTopBar } from '@/components/dashboard/LibraryTopBar';
-import { LibraryToolbar } from '@/components/dashboard/LibraryToolbar';
 import { PageHeader } from '@/components/dashboard/PageHeader';
+import { ActionToast } from '@/components/dashboard/ActionToast';
 import { Reference, SearchParams } from '@/types';
 
-type LibraryView = 'all' | 'favorites' | 'recent';
+type LibraryView = 'all' | 'favorites' | 'recent' | 'archive';
 
 export default function DashboardPage() {
   const [references, setReferences] = useState<Reference[]>([]);
   const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [libraryView, setLibraryView] = useState<LibraryView>('all');
   const [searchParams, setSearchParams] = useState<SearchParams>({
     sortBy: 'recent',
   });
+  const [pendingDelete, setPendingDelete] = useState<Reference | null>(null);
+  const [archivedToast, setArchivedToast] = useState<Reference | null>(null);
 
   useEffect(() => {
     const fetchReferences = async () => {
@@ -34,6 +35,9 @@ export default function DashboardPage() {
         if (searchParams.industry) query.set('industry', searchParams.industry);
         if (searchParams.isFavorite !== undefined) {
           query.set('isFavorite', String(searchParams.isFavorite));
+        }
+        if (searchParams.isArchived !== undefined) {
+          query.set('isArchived', String(searchParams.isArchived));
         }
 
         const response = await fetch('/api/references?' + query.toString());
@@ -64,21 +68,54 @@ export default function DashboardPage() {
     );
   };
 
-  const handleDeleteReference = (id: string) => {
+  const handleDeleteReference = (reference: Reference) => {
+    setPendingDelete(reference);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+
+    const reference = pendingDelete;
+    const response = await fetch(`/api/references/${reference.id}`, {
+      method: 'DELETE',
+    });
+
+    if (response.ok) {
+      setReferences((current) =>
+        current.filter((currentReference) => currentReference.id !== reference.id)
+      );
+      setPendingDelete(null);
+      setArchivedToast(reference);
+    }
+  };
+
+  const handleRestoreReference = (id: string) => {
     setReferences((current) => current.filter((reference) => reference.id !== id));
+  };
+
+  const handleUndoArchive = async () => {
+    if (!archivedToast) return;
+
+    const reference = archivedToast;
+    const response = await fetch(`/api/references/${reference.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: false }),
+    });
+
+    if (response.ok) {
+      setReferences((current) => [reference, ...current]);
+      setArchivedToast(null);
+    }
   };
 
   const hasActiveFilters = Boolean(
     searchParams.query ||
       searchParams.tags?.length ||
       searchParams.industry ||
-      searchParams.isFavorite
+        searchParams.isFavorite ||
+        searchParams.isArchived
   );
-
-  const clearFilters = () => {
-    setLibraryView('all');
-    setSearchParams({ sortBy: 'recent' });
-  };
 
   const showAllReferences = () => {
     setLibraryView('all');
@@ -86,6 +123,7 @@ export default function DashboardPage() {
       ...searchParams,
       sortBy: 'recent',
       isFavorite: undefined,
+      isArchived: false,
     });
   };
 
@@ -94,6 +132,7 @@ export default function DashboardPage() {
     setSearchParams({
       ...searchParams,
       isFavorite: true,
+      isArchived: false,
     });
   };
 
@@ -103,6 +142,16 @@ export default function DashboardPage() {
       ...searchParams,
       sortBy: 'recent',
       isFavorite: undefined,
+      isArchived: false,
+    });
+  };
+
+  const showArchive = () => {
+    setLibraryView('archive');
+    setSearchParams({
+      ...searchParams,
+      isFavorite: undefined,
+      isArchived: true,
     });
   };
 
@@ -127,6 +176,7 @@ export default function DashboardPage() {
         showAllReferences={showAllReferences}
         showFavorites={showFavorites}
         showRecentlyAdded={showRecentlyAdded}
+        showArchive={showArchive}
         handleTagChange={handleTagChange}
         setSidebarOpen={setSidebarOpen}
       />
@@ -140,19 +190,9 @@ export default function DashboardPage() {
             setSearchParams={setSearchParams}
           />
 
-          <PageHeader referenceCount={references.length} />
-
-          <LibraryToolbar
-            libraryView={libraryView}
-            searchParams={searchParams}
-            hasActiveFilters={hasActiveFilters}
-            viewMode={viewMode}
-            setViewMode={setViewMode}
-            setSearchParams={setSearchParams}
-            showAllReferences={showAllReferences}
-            showFavorites={showFavorites}
-            showRecentlyAdded={showRecentlyAdded}
-            clearFilters={clearFilters}
+          <PageHeader
+            referenceCount={references.length}
+            isArchiveView={libraryView === 'archive'}
           />
 
           <AddReferencePanel onAdd={handleAddReference} />
@@ -160,13 +200,32 @@ export default function DashboardPage() {
           <LibraryContent
             loading={loading}
             references={references}
-            viewMode={viewMode}
             hasActiveFilters={hasActiveFilters}
             onUpdate={handleUpdateReference}
             onDelete={handleDeleteReference}
+            onRestore={handleRestoreReference}
+            isArchiveView={libraryView === 'archive'}
           />
         </div>
       </main>
+
+      {pendingDelete && (
+        <ActionToast
+          variant="confirm"
+          message={`Delete '${pendingDelete.title}'?`}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
+
+      {archivedToast && (
+        <ActionToast
+          variant="undo"
+          message={`'${archivedToast.title}' moved to Archive`}
+          onUndo={handleUndoArchive}
+          onCancel={() => setArchivedToast(null)}
+        />
+      )}
     </div>
   );
 }

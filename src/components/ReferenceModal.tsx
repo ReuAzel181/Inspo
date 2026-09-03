@@ -2,6 +2,7 @@
 
 import {
   ChangeEvent,
+  ClipboardEvent as ReactClipboardEvent,
   DragEvent,
   useEffect,
   useRef,
@@ -9,7 +10,7 @@ import {
 } from 'react'
 import {
   Reference,
-  DESIGN_TAGS,
+  DESIGN_TAG_GROUPS,
   INDUSTRY_CATEGORIES,
 } from '@/types'
 
@@ -19,6 +20,8 @@ interface ReferenceModalProps {
   onUpdate: (reference: Reference) => void
 }
 
+type ImagePosition = 'top' | 'center' | 'bottom'
+
 export default function ReferenceModal({
   reference,
   onClose,
@@ -26,8 +29,6 @@ export default function ReferenceModal({
 }: ReferenceModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addImagesInputRef = useRef<HTMLInputElement>(null)
-  const industryDropdownRef =
-    useRef<HTMLDivElement>(null)
 
   const [isEditing, setIsEditing] = useState(true)
   const [isDraggingThumbnail, setIsDraggingThumbnail] =
@@ -38,23 +39,48 @@ export default function ReferenceModal({
   const [saveError, setSaveError] = useState('')
   const [isVisible, setIsVisible] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
-  const [isIndustryOpen, setIsIndustryOpen] =
-    useState(false)
+
+  // Image drag/reorder state.
+  const [draggedImageIndex, setDraggedImageIndex] =
+    useState<number | null>(null)
+  const [dragOverImageIndex, setDragOverImageIndex] =
+    useState<number | null>(null)
 
   const [thumbnailDataUrl, setThumbnailDataUrl] =
     useState('')
+
   const [additionalImageDataUrls, setAdditionalImageDataUrls] =
-    useState<string[]>(reference.additionalImageUrls || [])
+    useState<string[]>(
+      reference.additionalImageUrls || []
+    )
+
+  const [additionalImageNames, setAdditionalImageNames] =
+    useState<string[]>(
+      reference.additionalImageNames || []
+    )
+
+  const [additionalLinks, setAdditionalLinks] =
+    useState<string[]>(
+      reference.additionalLinks || []
+    )
+
+  const [additionalLinkNames, setAdditionalLinkNames] =
+    useState<string[]>(
+      reference.additionalLinkNames || []
+    )
+
   const [thumbnailPosition, setThumbnailPosition] =
-    useState<'top' | 'center' | 'bottom'>(
+    useState<ImagePosition>(
       reference.thumbnailPosition || 'top'
     )
+
   const [additionalImagePositions, setAdditionalImagePositions] =
-    useState<('top' | 'center' | 'bottom')[]>(
+    useState<ImagePosition[]>(
       reference.additionalImagePositions || []
     )
 
   const [editData, setEditData] = useState({
+    url: reference.url || '',
     title: reference.title || '',
     description: reference.description || '',
     thumbnailUrl: reference.thumbnailUrl || '',
@@ -69,31 +95,12 @@ export default function ReferenceModal({
       setIsVisible(true)
     )
 
-    return () => cancelAnimationFrame(frame)
-  }, [])
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        industryDropdownRef.current &&
-        !industryDropdownRef.current.contains(
-          event.target as Node
-        )
-      ) {
-        setIsIndustryOpen(false)
-      }
-    }
-
-    document.addEventListener(
-      'mousedown',
-      handleClickOutside
-    )
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
 
     return () => {
-      document.removeEventListener(
-        'mousedown',
-        handleClickOutside
-      )
+      cancelAnimationFrame(frame)
+      document.body.style.overflow = previousOverflow
     }
   }, [])
 
@@ -195,10 +202,48 @@ export default function ReferenceModal({
         ...prev,
         ...dataUrls,
       ])
+
+      setAdditionalImageNames((prev) => [
+        ...prev,
+        ...imageFiles.map((file) =>
+          file.name.replace(/\.[^/.]+$/, '')
+        ),
+      ])
     } catch {
       setThumbnailError(
         'Unable to read one or more images.'
       )
+    }
+  }
+
+  /*
+   * First pasted image becomes the cover.
+   * If a cover already exists, the pasted image is
+   * appended as an additional image.
+   */
+  const handleThumbnailPaste = async (
+    event: ReactClipboardEvent<HTMLDivElement>
+  ) => {
+    if (!isEditing) return
+
+    const imageItem = Array.from(
+      event.clipboardData.items
+    ).find((item) =>
+      item.type.startsWith('image/')
+    )
+
+    if (!imageItem) return
+
+    event.preventDefault()
+
+    const file = imageItem.getAsFile()
+
+    if (!file) return
+
+    if (imageSources.length > 0) {
+      await addImages([file])
+    } else {
+      await selectThumbnail(file)
     }
   }
 
@@ -232,22 +277,339 @@ export default function ReferenceModal({
     event.preventDefault()
     setIsDraggingThumbnail(false)
 
-    const file = event.dataTransfer.files?.[0]
+    const files = event.dataTransfer.files
 
-    if (file) {
-      void selectThumbnail(file)
+    if (!files?.length) return
+
+    /*
+     * If an image already exists, dropped files become
+     * additional images. Otherwise the first image
+     * becomes the cover.
+     */
+    if (imageSources.length > 0) {
+      void addImages(files)
+      return
     }
+
+    void selectThumbnail(files[0])
   }
 
-  const handleRemoveAdditionalImage = (
-    index: number
-  ) => {
+  /*
+   * Removes an image by its position in imageSources.
+   *
+   * Index 0 = cover.
+   * Index 1+ = additional images.
+   *
+   * If the cover is removed and another image exists,
+   * the next image is promoted to become the cover.
+   */
+  const handleRemoveImage = (index: number) => {
+    if (index < 0 || index >= imageSources.length) {
+      return
+    }
+
+    setThumbnailError('')
+
+    // Removing the cover.
+    if (index === 0) {
+      if (additionalImageDataUrls.length > 0) {
+        const [nextCover, ...remainingImages] =
+          additionalImageDataUrls
+
+        const [nextCoverName, ...remainingNames] =
+          additionalImageNames
+
+        const [
+          nextCoverPosition,
+          ...remainingPositions
+        ] = additionalImagePositions
+
+        /*
+         * The promoted image can either be a newly
+         * uploaded data URL or an existing persisted URL.
+         */
+        if (nextCover.startsWith('data:')) {
+          setThumbnailDataUrl(nextCover)
+
+          setEditData((prev) => ({
+            ...prev,
+            thumbnailUrl: '',
+          }))
+        } else {
+          setThumbnailDataUrl('')
+
+          setEditData((prev) => ({
+            ...prev,
+            thumbnailUrl: nextCover,
+          }))
+        }
+
+        setThumbnailPosition(
+          nextCoverPosition || 'top'
+        )
+
+        setAdditionalImageDataUrls(
+          remainingImages
+        )
+
+        setAdditionalImageNames(
+          remainingNames
+        )
+
+        setAdditionalImagePositions(
+          remainingPositions
+        )
+
+        /*
+         * The cover does not use an additional image
+         * name, so the promoted image's old name is
+         * intentionally removed from additional names.
+         */
+        void nextCoverName
+
+        return
+      }
+
+      // No additional images remain.
+      setThumbnailDataUrl('')
+
+      setEditData((prev) => ({
+        ...prev,
+        thumbnailUrl: '',
+      }))
+
+      setThumbnailPosition('top')
+
+      return
+    }
+
+    // Removing an additional image.
+    const additionalIndex = index - 1
+
     setAdditionalImageDataUrls((prev) =>
       prev.filter(
         (_, imageIndex) =>
-          imageIndex !== index
+          imageIndex !== additionalIndex
       )
     )
+
+    setAdditionalImageNames((prev) =>
+      prev.filter(
+        (_, imageIndex) =>
+          imageIndex !== additionalIndex
+      )
+    )
+
+    setAdditionalImagePositions((prev) =>
+      prev.filter(
+        (_, imageIndex) =>
+          imageIndex !== additionalIndex
+      )
+    )
+  }
+
+  /*
+   * Reorders the complete image collection.
+   *
+   * The first item is always treated as the cover.
+   * This allows users to drag an additional image
+   * into the first position and make it the cover.
+   */
+  const reorderImages = (
+    fromIndex: number,
+    toIndex: number
+  ) => {
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= imageSources.length ||
+      toIndex >= imageSources.length
+    ) {
+      return
+    }
+
+    const images = [...imageSources]
+
+    /*
+     * There is no separate cover name in the current
+     * data model. Keep an empty placeholder at index 0
+     * so additional names continue lining up correctly.
+     */
+    const names = [
+      '',
+      ...additionalImageNames,
+    ]
+
+    const positions: ImagePosition[] = [
+      thumbnailPosition,
+      ...additionalImagePositions,
+    ]
+
+    // Make sure positions always match image count.
+    while (positions.length < images.length) {
+      positions.push('top')
+    }
+
+    const [movedImage] = images.splice(
+      fromIndex,
+      1
+    )
+
+    images.splice(toIndex, 0, movedImage)
+
+    const [movedName] = names.splice(
+      fromIndex,
+      1
+    )
+
+    names.splice(toIndex, 0, movedName)
+
+    const [movedPosition] = positions.splice(
+      fromIndex,
+      1
+    )
+
+    positions.splice(toIndex, 0, movedPosition)
+
+    const [
+      newCover,
+      ...newAdditionalImages
+    ] = images
+
+    const [
+      newCoverName,
+      ...newAdditionalNames
+    ] = names
+
+    const [
+      newCoverPosition,
+      ...newAdditionalPositions
+    ] = positions
+
+    /*
+     * If the new cover is a data URL, it came from a
+     * newly uploaded/pasted image.
+     *
+     * If it is a normal URL, keep it as thumbnailUrl.
+     */
+    if (newCover?.startsWith('data:')) {
+      setThumbnailDataUrl(newCover)
+
+      setEditData((prev) => ({
+        ...prev,
+        thumbnailUrl: '',
+      }))
+    } else {
+      setThumbnailDataUrl('')
+
+      setEditData((prev) => ({
+        ...prev,
+        thumbnailUrl: newCover || '',
+      }))
+    }
+
+    setThumbnailPosition(
+      newCoverPosition || 'top'
+    )
+
+    setAdditionalImageDataUrls(
+      newAdditionalImages
+    )
+
+    /*
+     * Additional image names begin after the cover.
+     * The cover itself does not have a separate name.
+     */
+    void newCoverName
+
+    setAdditionalImageNames(
+      newAdditionalNames
+    )
+
+    setAdditionalImagePositions(
+      newAdditionalPositions
+    )
+  }
+
+  const handleImageDragStart = (
+    event: DragEvent<HTMLDivElement>,
+    index: number
+  ) => {
+    if (!isEditing) return
+
+    setDraggedImageIndex(index)
+    setDragOverImageIndex(null)
+
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(
+      'text/plain',
+      String(index)
+    )
+  }
+
+  const handleImageDragOver = (
+    event: DragEvent<HTMLDivElement>,
+    index: number
+  ) => {
+    if (!isEditing) return
+
+    /*
+     * Only treat this as image reordering when an
+     * internal image is currently being dragged.
+     */
+    if (draggedImageIndex === null) return
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+
+    setDragOverImageIndex(index)
+  }
+
+  const handleImageDragLeave = (
+    event: DragEvent<HTMLDivElement>
+  ) => {
+    /*
+     * Avoid clearing the state when moving between
+     * children inside the same image card.
+     */
+    if (
+      !event.currentTarget.contains(
+        event.relatedTarget as Node
+      )
+    ) {
+      setDragOverImageIndex(null)
+    }
+  }
+
+  const handleImageDrop = (
+    event: DragEvent<HTMLDivElement>,
+    index: number
+  ) => {
+    if (!isEditing) return
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (draggedImageIndex === null) {
+      return
+    }
+
+    const fromIndex = draggedImageIndex
+
+    setDraggedImageIndex(null)
+    setDragOverImageIndex(null)
+
+    if (fromIndex === index) {
+      return
+    }
+
+    reorderImages(fromIndex, index)
+  }
+
+  const handleImageDragEnd = () => {
+    setDraggedImageIndex(null)
+    setDragOverImageIndex(null)
   }
 
   const toggleTag = (tag: string) => {
@@ -269,6 +631,13 @@ export default function ReferenceModal({
     setIsSaving(true)
     setSaveError('')
 
+    const validSiteLinks = additionalLinks
+      .map((link, index) => ({
+        link: link.trim(),
+        name: additionalLinkNames[index]?.trim() || '',
+      }))
+      .filter(({ link }) => link.length > 0)
+
     try {
       const response = await fetch(
         `/api/references/${reference.id}`,
@@ -279,10 +648,12 @@ export default function ReferenceModal({
           },
           body: JSON.stringify({
             ...editData,
+            additionalLinks: validSiteLinks.map(({ link }) => link),
+            additionalLinkNames: validSiteLinks.map(({ name }) => name),
             thumbnailDataUrl:
               thumbnailDataUrl || undefined,
-            additionalImageDataUrls:
-              additionalImageDataUrls,
+            additionalImageDataUrls,
+            additionalImageNames,
             thumbnailPosition,
             additionalImagePositions,
           }),
@@ -298,6 +669,8 @@ export default function ReferenceModal({
       const updated = await response.json()
 
       onUpdate(updated)
+      setAdditionalLinks(validSiteLinks.map(({ link }) => link))
+      setAdditionalLinkNames(validSiteLinks.map(({ name }) => name))
       setIsEditing(false)
     } catch (error) {
       console.error(error)
@@ -312,7 +685,7 @@ export default function ReferenceModal({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center bg-[#17191c]/40 p-4 transition-opacity duration-200 ${
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4 transition-opacity duration-200 ${
         isVisible && !isClosing
           ? 'opacity-100'
           : 'opacity-0'
@@ -458,34 +831,104 @@ export default function ReferenceModal({
 
               {imageSources.length > 0 ? (
                 <>
-                  {/* ONE IMAGE */}
+                  {/* ONE IMAGE — FULL AVAILABLE WIDTH */}
                   {imageSources.length === 1 && (
                     <div className="w-full">
                       {imageSources.map(
                         (src, index) => (
                           <div
                             key={`${src}-${index}`}
-                            className="group relative w-full overflow-hidden rounded-lg border border-[#dfe3e8] bg-[#f1f3f5]"
+                            draggable={isEditing}
+                            onDragStart={(event) =>
+                              handleImageDragStart(
+                                event,
+                                index
+                              )
+                            }
+                            onDragOver={(event) =>
+                              handleImageDragOver(
+                                event,
+                                index
+                              )
+                            }
+                            onDragLeave={
+                              handleImageDragLeave
+                            }
+                            onDrop={(event) =>
+                              handleImageDrop(
+                                event,
+                                index
+                              )
+                            }
+                            onDragEnd={
+                              handleImageDragEnd
+                            }
+                            className={`group relative w-full overflow-hidden rounded-lg border border-[#dfe3e8] bg-[#f1f3f5] ${
+                              isEditing
+                                ? 'cursor-grab active:cursor-grabbing'
+                                : ''
+                            } ${
+                              draggedImageIndex ===
+                              index
+                                ? 'opacity-50'
+                                : ''
+                            } ${
+                              dragOverImageIndex ===
+                              index
+                                ? 'ring-2 ring-[#1769d1]/30'
+                                : ''
+                            }`}
                           >
                             <div className="absolute left-2 top-2 z-10 rounded-md border border-[#dfe3e8] bg-white/95 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#5f6670] shadow-sm">
                               Cover
                             </div>
 
+                            {isEditing && (
+                              <button
+                                type="button"
+                                draggable={false}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleRemoveImage(
+                                    index
+                                  )
+                                }}
+                                className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-[#efcaca] bg-white/95 text-[#d33b3b] opacity-0 shadow-sm transition hover:border-[#e4aaaa] hover:bg-[#fff6f6] group-hover:opacity-100 focus:opacity-100"
+                                aria-label="Remove cover image"
+                                title="Remove cover image"
+                              >
+                                <svg
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                >
+                                  <path d="M18 6 6 18" />
+                                  <path d="m6 6 12 12" />
+                                </svg>
+                              </button>
+                            )}
+
                             <div className="max-h-[420px] w-full overflow-auto">
                               <img
                                 src={src}
                                 alt="Reference cover"
+                                draggable={false}
                                 className="block h-auto w-full"
                               />
                             </div>
 
-                            <div className="flex items-center justify-between border-t border-[#dfe3e8] bg-white px-3 py-2">
+                            <div className="flex w-full items-center justify-between gap-2 border-t border-[#dfe3e8] bg-white px-3 py-2">
                               <span className="text-[11px] text-[#777e87]">
                                 Primary image
                               </span>
 
                               <span className="text-[10px] text-[#9298a1]">
-                                Scroll to inspect
+                                {isEditing
+                                  ? 'Drag to reorder'
+                                  : 'Scroll to inspect'}
                               </span>
                             </div>
                           </div>
@@ -501,7 +944,46 @@ export default function ReferenceModal({
                         (src, index) => (
                           <div
                             key={`${src}-${index}`}
-                            className="group relative min-w-0 w-full overflow-hidden rounded-lg border border-[#dfe3e8] bg-[#f1f3f5]"
+                            draggable={isEditing}
+                            onDragStart={(event) =>
+                              handleImageDragStart(
+                                event,
+                                index
+                              )
+                            }
+                            onDragOver={(event) =>
+                              handleImageDragOver(
+                                event,
+                                index
+                              )
+                            }
+                            onDragLeave={
+                              handleImageDragLeave
+                            }
+                            onDrop={(event) =>
+                              handleImageDrop(
+                                event,
+                                index
+                              )
+                            }
+                            onDragEnd={
+                              handleImageDragEnd
+                            }
+                            className={`group relative min-w-0 w-full overflow-hidden rounded-lg border border-[#dfe3e8] bg-[#f1f3f5] ${
+                              isEditing
+                                ? 'cursor-grab active:cursor-grabbing'
+                                : ''
+                            } ${
+                              draggedImageIndex ===
+                              index
+                                ? 'opacity-50'
+                                : ''
+                            } ${
+                              dragOverImageIndex ===
+                              index
+                                ? 'ring-2 ring-[#1769d1]/30'
+                                : ''
+                            }`}
                           >
                             <div className="absolute left-2 top-2 z-10 rounded-md border border-[#dfe3e8] bg-white/95 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#5f6670] shadow-sm">
                               {index === 0
@@ -509,31 +991,37 @@ export default function ReferenceModal({
                                 : 'Image 2'}
                             </div>
 
-                            {isEditing &&
-                              index > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleRemoveAdditionalImage(
-                                      index - 1
-                                    )
-                                  }
-                                  className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-[#efcaca] bg-white/95 text-[#d33b3b] opacity-0 shadow-sm transition hover:border-[#e4aaaa] hover:bg-[#fff6f6] group-hover:opacity-100"
-                                  aria-label="Remove image 2"
+                            {isEditing && (
+                              <button
+                                type="button"
+                                draggable={false}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleRemoveImage(
+                                    index
+                                  )
+                                }}
+                                className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-[#efcaca] bg-white/95 text-[#d33b3b] opacity-0 shadow-sm transition hover:border-[#e4aaaa] hover:bg-[#fff6f6] group-hover:opacity-100 focus:opacity-100"
+                                aria-label={`Remove ${
+                                  index === 0
+                                    ? 'cover image'
+                                    : 'image 2'
+                                }`}
+                                title="Remove image"
+                              >
+                                <svg
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
                                 >
-                                  <svg
-                                    width="14"
-                                    height="14"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                  >
-                                    <path d="M18 6 6 18" />
-                                    <path d="m6 6 12 12" />
-                                  </svg>
-                                </button>
-                              )}
+                                  <path d="M18 6 6 18" />
+                                  <path d="m6 6 12 12" />
+                                </svg>
+                              </button>
+                            )}
 
                             <div
                               className="h-[300px] w-full overflow-auto"
@@ -545,12 +1033,6 @@ export default function ReferenceModal({
                                   container.scrollHeight >
                                   container.clientHeight
                                 ) {
-                                  /*
-                                   * Reduced wheel sensitivity.
-                                   * 0.3 means the image moves only
-                                   * 30% of the browser's normal
-                                   * wheel delta.
-                                   */
                                   const scrollAmount =
                                     event.deltaY * 0.3
 
@@ -569,11 +1051,12 @@ export default function ReferenceModal({
                                     ? 'Reference cover'
                                     : 'Reference image 2'
                                 }
+                                draggable={false}
                                 className="block h-auto min-h-full w-full object-cover"
                               />
                             </div>
 
-                            <div className="flex items-center justify-between border-t border-[#dfe3e8] bg-white px-3 py-2">
+                            <div className="flex w-full items-center justify-between gap-2 border-t border-[#dfe3e8] bg-white px-3 py-2">
                               <span className="text-[11px] text-[#777e87]">
                                 {index === 0
                                   ? 'Primary image'
@@ -581,7 +1064,9 @@ export default function ReferenceModal({
                               </span>
 
                               <span className="text-[10px] text-[#9298a1]">
-                                Scroll to inspect
+                                {isEditing
+                                  ? 'Drag to reorder'
+                                  : 'Scroll to inspect'}
                               </span>
                             </div>
                           </div>
@@ -597,7 +1082,46 @@ export default function ReferenceModal({
                         (src, index) => (
                           <div
                             key={`${src}-${index}`}
-                            className="group relative w-[min(78vw,720px)] shrink-0 overflow-hidden rounded-lg border border-[#dfe3e8] bg-[#f1f3f5]"
+                            draggable={isEditing}
+                            onDragStart={(event) =>
+                              handleImageDragStart(
+                                event,
+                                index
+                              )
+                            }
+                            onDragOver={(event) =>
+                              handleImageDragOver(
+                                event,
+                                index
+                              )
+                            }
+                            onDragLeave={
+                              handleImageDragLeave
+                            }
+                            onDrop={(event) =>
+                              handleImageDrop(
+                                event,
+                                index
+                              )
+                            }
+                            onDragEnd={
+                              handleImageDragEnd
+                            }
+                            className={`group relative w-[min(78vw,720px)] shrink-0 overflow-hidden rounded-lg border border-[#dfe3e8] bg-[#f1f3f5] ${
+                              isEditing
+                                ? 'cursor-grab active:cursor-grabbing'
+                                : ''
+                            } ${
+                              draggedImageIndex ===
+                              index
+                                ? 'opacity-50'
+                                : ''
+                            } ${
+                              dragOverImageIndex ===
+                              index
+                                ? 'ring-2 ring-[#1769d1]/30'
+                                : ''
+                            }`}
                           >
                             <div className="absolute left-2 top-2 z-10 rounded-md border border-[#dfe3e8] bg-white/95 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#5f6670] shadow-sm">
                               {index === 0
@@ -607,33 +1131,35 @@ export default function ReferenceModal({
                                   }`}
                             </div>
 
-                            {isEditing &&
-                              index > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleRemoveAdditionalImage(
-                                      index - 1
-                                    )
-                                  }
-                                  className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-[#efcaca] bg-white/95 text-[#d33b3b] opacity-0 shadow-sm transition hover:border-[#e4aaaa] hover:bg-[#fff6f6] group-hover:opacity-100"
-                                  aria-label={`Remove image ${
-                                    index + 1
-                                  }`}
+                            {isEditing && (
+                              <button
+                                type="button"
+                                draggable={false}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleRemoveImage(
+                                    index
+                                  )
+                                }}
+                                className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-[#efcaca] bg-white/95 text-[#d33b3b] opacity-0 shadow-sm transition hover:border-[#e4aaaa] hover:bg-[#fff6f6] group-hover:opacity-100 focus:opacity-100"
+                                aria-label={`Remove image ${
+                                  index + 1
+                                }`}
+                                title="Remove image"
+                              >
+                                <svg
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
                                 >
-                                  <svg
-                                    width="14"
-                                    height="14"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                  >
-                                    <path d="M18 6 6 18" />
-                                    <path d="m6 6 12 12" />
-                                  </svg>
-                                </button>
-                              )}
+                                  <path d="M18 6 6 18" />
+                                  <path d="m6 6 12 12" />
+                                </svg>
+                              </button>
+                            )}
 
                             <div
                               className="h-[380px] w-full overflow-auto"
@@ -650,11 +1176,12 @@ export default function ReferenceModal({
                                         index + 1
                                       }`
                                 }
+                                draggable={false}
                                 className="block h-auto w-full min-w-full max-w-none"
                               />
                             </div>
 
-                            <div className="flex items-center justify-between border-t border-[#dfe3e8] bg-white px-3 py-2">
+                            <div className="flex w-full items-center justify-between gap-2 border-t border-[#dfe3e8] bg-white px-3 py-2">
                               <span className="text-[11px] text-[#777e87]">
                                 {index === 0
                                   ? 'Primary image'
@@ -662,7 +1189,9 @@ export default function ReferenceModal({
                               </span>
 
                               <span className="text-[10px] text-[#9298a1]">
-                                Scroll to inspect
+                                {isEditing
+                                  ? 'Drag to reorder'
+                                  : 'Scroll to inspect'}
                               </span>
                             </div>
                           </div>
@@ -670,66 +1199,19 @@ export default function ReferenceModal({
                       )}
                     </div>
                   )}
+
+                  {isEditing && (
+                    <p className="mt-2 text-[10px] text-[#9298a1]">
+                      Drag an image onto another image to
+                      change its order. The first image is
+                      always the cover.
+                    </p>
+                  )}
                 </>
               ) : (
-                <div
-                  onDragOver={(event) => {
-                    event.preventDefault()
-                    setIsDraggingThumbnail(true)
-                  }}
-                  onDragLeave={() =>
-                    setIsDraggingThumbnail(false)
-                  }
-                  onDrop={handleThumbnailDrop}
-                  onClick={() =>
-                    isEditing &&
-                    fileInputRef.current?.click()
-                  }
-                  className={`flex h-[260px] cursor-pointer items-center justify-center rounded-lg border border-dashed transition ${
-                    isDraggingThumbnail
-                      ? 'border-[#1769d1] bg-[#f3f8ff]'
-                      : 'border-[#cfd4da] bg-[#f8f9fb] hover:border-[#aeb5bd] hover:bg-[#f5f6f8]'
-                  }`}
-                >
-                  <div className="text-center">
-                    <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md border border-[#dfe3e8] bg-white text-[#777e87]">
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                      >
-                        <rect
-                          x="3"
-                          y="3"
-                          width="18"
-                          height="18"
-                          rx="2"
-                        />
-                        <circle
-                          cx="8.5"
-                          cy="8.5"
-                          r="1.5"
-                        />
-                        <path d="m21 15-5-5L5 21" />
-                      </svg>
-                    </div>
-
-                    <p className="text-[13px] font-medium text-[#5f6670]">
-                      Add an image
-                    </p>
-
-                    <p className="mt-1 text-[11px] text-[#9298a1]">
-                      Click or drag an image here
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {isEditing &&
-                imageSources.length > 0 && (
+                /* Empty image state */
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {/* Drop image */}
                   <div
                     onDragOver={(event) => {
                       event.preventDefault()
@@ -738,22 +1220,186 @@ export default function ReferenceModal({
                     onDragLeave={() =>
                       setIsDraggingThumbnail(false)
                     }
-                    onDrop={(event) => {
-                      event.preventDefault()
-                      setIsDraggingThumbnail(false)
-
-                      void addImages(
-                        event.dataTransfer.files
-                      )
-                    }}
-                    className={`mt-3 rounded-md border border-dashed px-4 py-3 transition ${
-                      isDraggingThumbnail
-                        ? 'border-[#1769d1] bg-[#f3f8ff]'
-                        : 'border-[#dfe3e8] bg-[#fafbfc]'
-                    }`}
+                    onDrop={handleThumbnailDrop}
+                    onClick={() =>
+                      isEditing &&
+                      fileInputRef.current?.click()
+                    }
+                    className={`
+                      flex
+                      h-[260px]
+                      cursor-pointer
+                      items-center
+                      justify-center
+                      rounded-lg
+                      border
+                      border-dashed
+                      transition
+                      ${
+                        isDraggingThumbnail
+                          ? 'border-[#1769d1] bg-[#f3f8ff]'
+                          : 'border-[#cfd4da] bg-[#f8f9fb] hover:border-[#aeb5bd] hover:bg-[#f5f6f8]'
+                      }
+                    `}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
+                    <div className="text-center">
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md border border-[#dfe3e8] bg-white text-[#777e87]">
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        >
+                          <rect
+                            x="3"
+                            y="3"
+                            width="18"
+                            height="18"
+                            rx="2"
+                          />
+                          <circle
+                            cx="8.5"
+                            cy="8.5"
+                            r="1.5"
+                          />
+                          <path d="m21 15-5-5L5 21" />
+                        </svg>
+                      </div>
+
+                      <p className="text-[13px] font-medium text-[#5f6670]">
+                        Add an image
+                      </p>
+
+                      <p className="mt-1 text-[11px] text-[#9298a1]">
+                        Click or drag an image here
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Paste image */}
+                  <div
+                    tabIndex={isEditing ? 0 : -1}
+                    onPaste={handleThumbnailPaste}
+                    onClick={(event) => {
+                      if (isEditing) {
+                        event.currentTarget.focus()
+                      }
+                    }}
+                    className="
+                      flex
+                      h-[260px]
+                      cursor-text
+                      items-center
+                      justify-center
+                      rounded-lg
+                      border
+                      border-dashed
+                      border-[#cfd4da]
+                      bg-[#f8f9fb]
+                      px-4
+                      text-center
+                      text-[11px]
+                      text-[#777e87]
+                      outline-none
+                      transition
+                      hover:border-[#aeb5bd]
+                      hover:bg-[#f5f6f8]
+                      focus:border-[#1769d1]
+                      focus:ring-2
+                      focus:ring-[#1769d1]/10
+                    "
+                  >
+                    <div>
+                      <svg
+                        className="mx-auto mb-3 h-7 w-7 text-[#777e87]"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 16V4" />
+                        <path d="m7 9 5-5 5 5" />
+                        <path d="M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" />
+                      </svg>
+
+                      <p className="font-medium text-[#5f6670]">
+                        Paste an image
+                      </p>
+
+                      <p className="mt-1 text-[#9298a1]">
+                        Click here, then press Ctrl+V
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Add more images */}
+              {isEditing &&
+                imageSources.length > 0 && (
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {/* Drag more images */}
+                    <div
+                      onDragOver={(event) => {
+                        /*
+                         * Do not activate the file-drop state
+                         * when dragging an existing image card.
+                         */
+                        if (
+                          draggedImageIndex !== null
+                        ) {
+                          return
+                        }
+
+                        event.preventDefault()
+                        setIsDraggingThumbnail(true)
+                      }}
+                      onDragLeave={() =>
+                        setIsDraggingThumbnail(false)
+                      }
+                      onDrop={(event) => {
+                        /*
+                         * Existing image cards use their own
+                         * drop handler. This area only accepts
+                         * actual external image files.
+                         */
+                        if (
+                          draggedImageIndex !== null
+                        ) {
+                          return
+                        }
+
+                        event.preventDefault()
+                        setIsDraggingThumbnail(false)
+
+                        void addImages(
+                          event.dataTransfer.files
+                        )
+                      }}
+                      className={`
+                        flex
+                        min-h-12
+                        w-full
+                        items-center
+                        justify-between
+                        gap-3
+                        rounded-md
+                        border
+                        border-dashed
+                        px-3
+                        py-2
+                        transition
+                        ${
+                          isDraggingThumbnail
+                            ? 'border-[#1769d1] bg-[#f3f8ff]'
+                            : 'border-[#dfe3e8] bg-[#fafbfc] hover:border-[#cbd1d8]'
+                        }
+                      `}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
                         <svg
                           width="15"
                           height="15"
@@ -761,6 +1407,7 @@ export default function ReferenceModal({
                           fill="none"
                           stroke="currentColor"
                           strokeWidth="1.8"
+                          className="shrink-0 text-[#777e87]"
                         >
                           <path d="M12 3v12" />
                           <path d="m7 10 5 5 5-5" />
@@ -768,7 +1415,7 @@ export default function ReferenceModal({
                         </svg>
 
                         <span className="text-[11px] text-[#777e87]">
-                          Drag more images here to add them
+                          Drag more images here
                         </span>
                       </div>
 
@@ -777,10 +1424,64 @@ export default function ReferenceModal({
                         onClick={() =>
                           addImagesInputRef.current?.click()
                         }
-                        className="text-[11px] font-semibold text-[#1769d1] hover:underline"
+                        className="shrink-0 text-[11px] font-semibold text-[#1769d1] hover:underline"
                       >
                         Browse files
                       </button>
+                    </div>
+
+                    {/* Paste more images */}
+                    <div
+                      tabIndex={0}
+                      onPaste={handleThumbnailPaste}
+                      onClick={(event) => {
+                        if (isEditing) {
+                          event.currentTarget.focus()
+                        }
+                      }}
+                      className="
+                        flex
+                        min-h-12
+                        w-full
+                        cursor-text
+                        items-center
+                        justify-center
+                        gap-2
+                        rounded-md
+                        border
+                        border-dashed
+                        border-[#dfe3e8]
+                        bg-[#fafbfc]
+                        px-3
+                        py-2
+                        text-[11px]
+                        text-[#777e87]
+                        outline-none
+                        transition
+                        hover:border-[#cbd1d8]
+                        hover:bg-white
+                        focus:border-[#1769d1]
+                        focus:ring-2
+                        focus:ring-[#1769d1]/10
+                      "
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        className="shrink-0"
+                      >
+                        <path d="M12 16V4" />
+                        <path d="m7 9 5-5 5 5" />
+                        <path d="M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" />
+                      </svg>
+
+                      <span>
+                        Paste image with Ctrl+V
+                      </span>
                     </div>
                   </div>
                 )}
@@ -791,24 +1492,37 @@ export default function ReferenceModal({
                 </p>
               )}
 
+              {/* Crop controls */}
               {isEditing && imageSources.length > 0 && (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div
+                  className={`mt-3 grid w-full gap-2 ${
+                    imageSources.length > 1
+                      ? 'sm:grid-cols-2'
+                      : 'grid-cols-1'
+                  }`}
+                >
                   {imageSources.map((_, index) => {
-                    const position = index === 0
-                      ? thumbnailPosition
-                      : additionalImagePositions[index - 1] || 'top'
+                    const position =
+                      index === 0
+                        ? thumbnailPosition
+                        : additionalImagePositions[index - 1] || 'top'
 
                     return (
                       <div
                         key={`crop-control-${index}`}
-                        className="flex items-center justify-between gap-2 rounded-md border border-[#dfe3e8] bg-[#fafbfc] px-3 py-2.5"
+                        className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-[#dfe3e8] bg-[#fafbfc] px-3 py-2.5"
                       >
-                        <span className="text-[11px] font-medium text-[#777e87]">
-                          {index === 0 ? 'Cover' : `Image ${index + 1}`} crop
+                        <span className="min-w-0 text-[11px] font-medium text-[#777e87]">
+                          {index === 0
+                            ? 'Cover'
+                            : `Image ${index + 1}`}{' '}
+                          crop
                         </span>
 
-                        <div className="flex gap-1 rounded-md border border-[#dfe3e8] bg-white p-1">
-                          {(['top', 'center', 'bottom'] as const).map((nextPosition) => (
+                        <div className="flex shrink-0 gap-1 rounded-md border border-[#dfe3e8] bg-white p-1">
+                          {(
+                            ['top', 'center', 'bottom'] as const
+                          ).map((nextPosition) => (
                             <button
                               key={nextPosition}
                               type="button"
@@ -820,7 +1534,9 @@ export default function ReferenceModal({
 
                                 setAdditionalImagePositions((previous) => {
                                   const positions = [...previous]
+
                                   positions[index - 1] = nextPosition
+
                                   return positions
                                 })
                               }}
@@ -866,6 +1582,145 @@ export default function ReferenceModal({
               )}
             </div>
 
+            {/* Site links */}
+            <section className="mt-5">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#777e87]">
+                  Site links
+                </label>
+
+                {isEditing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdditionalLinks(
+                        (previous) => [
+                          ...previous,
+                          '',
+                        ]
+                      )
+
+                      setAdditionalLinkNames(
+                        (previous) => [
+                          ...previous,
+                          '',
+                        ]
+                      )
+                    }}
+                    className="text-[11px] font-semibold text-[#1769d1] hover:underline"
+                  >
+                    Add link
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                {/* Main site link */}
+                <div className="flex items-center gap-2">
+                  <span className="flex h-9 w-12 shrink-0 items-center justify-center rounded-md bg-[#eef5fd] px-1.5 text-[9px] font-semibold uppercase tracking-[0.04em] text-[#1769d1]">
+                    Main
+                  </span>
+
+                  <input
+                    value={editData.url}
+                    disabled={!isEditing}
+                    onChange={(event) =>
+                      handleFieldChange(
+                        'url',
+                        event.target.value
+                      )
+                    }
+                    placeholder="https://example.com"
+                    aria-label="Main site link"
+                    className="h-9 min-w-0 flex-1 rounded-md border border-[#dfe3e8] bg-white px-3 text-[12px] text-[#17191c] outline-none placeholder:text-[#a0a6ad] focus:border-[#1769d1] focus:ring-2 focus:ring-[#1769d1]/10 disabled:bg-[#fafbfc]"
+                  />
+                </div>
+
+                {/* Additional site links */}
+                {additionalLinks.map(
+                  (link, index) => (
+                    <div
+                      key={`site-link-${index}`}
+                      className="flex items-center gap-2"
+                    >
+                      {/* Name — left, approximately 30% */}
+                      <input
+                        value={
+                          additionalLinkNames[
+                            index
+                          ] || ''
+                        }
+                        disabled={!isEditing}
+                        onChange={(event) => {
+                          setAdditionalLinkNames(
+                            (previous) => {
+                              const names = [
+                                ...previous,
+                              ]
+
+                              names[index] =
+                                event.target.value
+
+                              return names
+                            }
+                          )
+                        }}
+                        placeholder="Name"
+                        aria-label={`Additional site link ${
+                          index + 1
+                        } name`}
+                        className="h-9 w-[30%] min-w-0 shrink-0 rounded-md border border-[#dfe3e8] bg-white px-3 text-[12px] text-[#17191c] outline-none placeholder:text-[#a0a6ad] focus:border-[#1769d1] focus:ring-2 focus:ring-[#1769d1]/10 disabled:bg-[#fafbfc]"
+                      />
+
+                      {/* URL — approximately 60% */}
+                      <input
+                        value={link}
+                        disabled={!isEditing}
+                        onChange={(event) => {
+                          setAdditionalLinks(
+                            (previous) => {
+                              const links = [
+                                ...previous,
+                              ]
+
+                              links[index] =
+                                event.target.value
+
+                              return links
+                            }
+                          )
+                        }}
+                        placeholder="https://example.com"
+                        aria-label={`Additional site link ${
+                          index + 1
+                        }`}
+                        className="h-9 flex-1 min-w-0 shrink-0 rounded-md border border-[#dfe3e8] bg-white px-3 text-[12px] text-[#17191c] outline-none placeholder:text-[#a0a6ad] focus:border-[#1769d1] focus:ring-2 focus:ring-[#1769d1]/10 disabled:bg-[#fafbfc]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdditionalLinks((previous) =>
+                            previous.filter((_, linkIndex) => linkIndex !== index)
+                          )
+                          setAdditionalLinkNames((previous) =>
+                            previous.filter((_, nameIndex) => nameIndex !== index)
+                          )
+                        }}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#efcaca] text-[#d33b3b] transition hover:bg-[#fff7f7]"
+                        aria-label={`Remove additional site link ${index + 1}`}
+                        title="Remove site link"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 6 6 18" />
+                          <path d="m6 6 12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+            </section>
+
             {/* Design tags */}
             <section className="mt-5">
               <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[#777e87]">
@@ -873,32 +1728,34 @@ export default function ReferenceModal({
               </label>
 
               <div className="flex flex-wrap gap-1.5">
-                {DESIGN_TAGS.map((tag) => {
-                  const selected =
-                    editData.tags.includes(tag)
+                {DESIGN_TAG_GROUPS.map((group) => (
+                  <div key={group.label}>
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#9298a1]">
+                      {group.label}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {group.tags.map((tag) => {
+                        const selected = editData.tags.includes(tag)
 
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      disabled={!isEditing}
-                      onClick={() =>
-                        toggleTag(tag)
-                      }
-                      className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition ${
-                        selected
-                          ? 'border-[#b9d2ef] bg-[#eef5fd] text-[#1769d1]'
-                          : 'border-[#dfe3e8] bg-white text-[#777e87] hover:border-[#cbd1d8] hover:bg-[#f8f9fb]'
-                      } ${
-                        !isEditing
-                          ? 'cursor-default'
-                          : ''
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  )
-                })}
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            disabled={!isEditing}
+                            onClick={() => toggleTag(tag)}
+                            className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition ${
+                              selected
+                                ? 'border-[#b9d2ef] bg-[#eef5fd] text-[#1769d1]'
+                                : 'border-[#dfe3e8] bg-white text-[#777e87] hover:border-[#cbd1d8] hover:bg-[#f8f9fb]'
+                            } ${!isEditing ? 'cursor-default' : ''}`}
+                          >
+                            {tag}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             </section>
 
@@ -937,162 +1794,28 @@ export default function ReferenceModal({
                   Industry
                 </label>
 
-                <div
-                  ref={industryDropdownRef}
-                  className="relative"
-                >
-                  <div className="flex items-center gap-2 rounded-lg border border-[#dfe3e8] bg-white px-2.5">
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#edf4fc] text-[#1769d1]">
-                      <svg
-                        width="15"
-                        height="15"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                      >
-                        <path d="M4 21V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16" />
-                        <path d="M2 21h20" />
-                        <path d="M8 7h2" />
-                        <path d="M14 7h2" />
-                        <path d="M8 11h2" />
-                        <path d="M14 11h2" />
-                        <path d="M8 15h2" />
-                        <path d="M14 15h2" />
-                      </svg>
-                    </div>
-
-                    {isEditing ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setIsIndustryOpen(
-                            (prev) => !prev
-                          )
-                        }
-                        className={`flex h-10 flex-1 items-center justify-between gap-2 text-left text-[13px] font-medium outline-none ${
-                          editData.industry
-                            ? 'text-[#17191c]'
-                            : 'text-[#9298a1]'
-                        }`}
-                        aria-haspopup="listbox"
-                        aria-expanded={
-                          isIndustryOpen
-                        }
-                      >
-                        <span className="truncate">
-                          {editData.industry ||
-                            'Select industry'}
-                        </span>
-
-                        <svg
-                          className={`shrink-0 text-[#777e87] transition-transform duration-150 ${
-                            isIndustryOpen
-                              ? 'rotate-180'
-                              : ''
-                          }`}
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="m6 9 6 6 6-6" />
-                        </svg>
-                      </button>
-                    ) : (
-                      <span className="py-2.5 text-[13px] font-medium text-[#17191c]">
-                        {editData.industry ||
-                          'No industry selected'}
-                      </span>
+                {isEditing ? (
+                  <select
+                    value={editData.industry}
+                    onChange={(event) =>
+                      handleFieldChange('industry', event.target.value)
+                    }
+                    className="h-9 w-full rounded-md border border-[#dfe3e8] bg-white px-3 text-[13px] text-[#17191c] outline-none focus:border-[#1769d1] focus:ring-2 focus:ring-[#1769d1]/10"
+                  >
+                    <option value="">None</option>
+                    {INDUSTRY_CATEGORIES.filter((industry) => industry !== 'Other').map(
+                      (industry) => (
+                        <option key={industry} value={industry}>
+                          {industry}
+                        </option>
+                      )
                     )}
-                  </div>
-
-                  {isEditing &&
-                    isIndustryOpen && (
-                      <div
-                        className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-[280px] overflow-y-auto rounded-lg border border-[#dfe3e8] bg-white p-1.5 shadow-[0_12px_30px_rgba(23,25,28,0.12)]"
-                        role="listbox"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleFieldChange(
-                              'industry',
-                              ''
-                            )
-                            setIsIndustryOpen(
-                              false
-                            )
-                          }}
-                          className={`flex w-full items-center rounded-md px-3 py-2.5 text-left text-[12px] transition ${
-                            !editData.industry
-                              ? 'bg-[#f3f7fc] text-[#1769d1]'
-                              : 'text-[#777e87] hover:bg-[#f8f9fb] hover:text-[#17191c]'
-                          }`}
-                          role="option"
-                          aria-selected={
-                            !editData.industry
-                          }
-                        >
-                          Select industry
-                        </button>
-
-                        <div className="my-1 border-t border-[#eef0f2]" />
-
-                        {INDUSTRY_CATEGORIES.map(
-                          (industry) => {
-                            const selected =
-                              editData.industry ===
-                              industry
-
-                            return (
-                              <button
-                                key={industry}
-                                type="button"
-                                onClick={() => {
-                                  handleFieldChange(
-                                    'industry',
-                                    industry
-                                  )
-                                  setIsIndustryOpen(
-                                    false
-                                  )
-                                }}
-                                className={`flex w-full items-center justify-between rounded-md px-3 py-2.5 text-left text-[12px] transition ${
-                                  selected
-                                    ? 'bg-[#eef5fd] font-semibold text-[#1769d1]'
-                                    : 'text-[#5f6670] hover:bg-[#f8f9fb] hover:text-[#17191c]'
-                                }`}
-                                role="option"
-                                aria-selected={
-                                  selected
-                                }
-                              >
-                                <span>
-                                  {industry}
-                                </span>
-
-                                {selected && (
-                                  <svg
-                                    width="14"
-                                    height="14"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                  >
-                                    <path d="m5 12 4 4L19 6" />
-                                  </svg>
-                                )}
-                              </button>
-                            )
-                          }
-                        )}
-                      </div>
-                    )}
-                </div>
+                  </select>
+                ) : (
+                  <p className="h-9 flex items-center text-[13px] font-medium text-[#17191c]">
+                    {editData.industry || 'None'}
+                  </p>
+                )}
               </div>
 
               {/* Screenshot URL */}

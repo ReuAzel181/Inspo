@@ -5,33 +5,19 @@ import { ReferenceCard } from './ReferenceCard';
 
 interface ReferenceGridProps {
   references: Reference[];
-  viewMode: 'grid' | 'list';
   onUpdate: (reference: Reference) => void;
-  onDelete: (id: string) => void;
+  onDelete: (reference: Reference) => void;
+  onRestore: (id: string) => void;
+  isArchiveView: boolean;
 }
 
 export function ReferenceGrid({
   references,
-  viewMode,
   onUpdate,
   onDelete,
+  onRestore,
+  isArchiveView,
 }: ReferenceGridProps) {
-  if (viewMode === 'list') {
-    return (
-      <div className="list-references">
-        {references.map((ref) => (
-          <ReferenceCard
-            key={ref.id}
-            reference={ref}
-            onUpdate={onUpdate}
-            onDelete={onDelete}
-            viewMode="list"
-          />
-        ))}
-      </div>
-    );
-  }
-
   return (
     <div className="grid-references">
       {references.map((ref) => (
@@ -40,7 +26,8 @@ export function ReferenceGrid({
           reference={ref}
           onUpdate={onUpdate}
           onDelete={onDelete}
-          viewMode="grid"
+          onRestore={onRestore}
+          isArchiveView={isArchiveView}
         />
       ))}
     </div>
